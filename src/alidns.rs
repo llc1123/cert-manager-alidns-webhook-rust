@@ -154,21 +154,25 @@ impl Client {
 
     async fn txt_records(&self, domain: &str, rr: &str) -> Result<Vec<Record>, Error> {
         let mut matching = Vec::new();
-        let mut seen = 0;
-        for page in 1.. {
-            let page = page.to_string();
+        // The page count is fixed by the first response so a moving TotalCount
+        // cannot extend the scan; a short page is always the last one.
+        let mut last_page = 1;
+        for page in 1_u64.. {
+            let page_number = page.to_string();
             let page_size = PAGE_SIZE.to_string();
             let params = [
                 ("DomainName", domain),
                 ("RRKeyWord", rr),
                 ("TypeKeyWord", "TXT"),
-                ("PageNumber", page.as_str()),
+                ("PageNumber", page_number.as_str()),
                 ("PageSize", page_size.as_str()),
             ];
             let response: DescribeDomainRecords =
                 self.call("DescribeDomainRecords", &params).await?;
+            if page == 1 {
+                last_page = response.total_count.div_ceil(PAGE_SIZE);
+            }
             let fetched = response.domain_records.record.len() as u64;
-            seen += fetched;
             matching.extend(
                 response
                     .domain_records
@@ -176,7 +180,7 @@ impl Client {
                     .into_iter()
                     .filter(|record| record.rr == rr && record.kind == "TXT"),
             );
-            if fetched == 0 || seen >= response.total_count {
+            if fetched < PAGE_SIZE || page >= last_page {
                 break;
             }
         }
