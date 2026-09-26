@@ -1,0 +1,46 @@
+# A private CA signs the serving certificate so leaf rotation never changes the
+# APIService caBundle injected by cainjector.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: alidns-webhook-selfsign
+  namespace: cert-manager
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: alidns-webhook-ca
+  namespace: cert-manager
+spec:
+  secretName: alidns-webhook-ca
+  duration: 43800h # 5y
+  issuerRef:
+    name: alidns-webhook-selfsign
+  commonName: ca.alidns-webhook.cert-manager
+  isCA: true
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: alidns-webhook-ca
+  namespace: cert-manager
+spec:
+  ca:
+    secretName: alidns-webhook-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: alidns-webhook-tls
+  namespace: cert-manager
+spec:
+  secretName: alidns-webhook-tls
+  duration: 8760h # 1y
+  issuerRef:
+    name: alidns-webhook-ca
+  dnsNames:
+    - alidns-webhook
+    - alidns-webhook.cert-manager
+    - alidns-webhook.cert-manager.svc

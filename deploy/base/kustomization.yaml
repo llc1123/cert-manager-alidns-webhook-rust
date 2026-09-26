@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# No `namespace:` transformer: it would also move the kube-system RoleBinding.
+# Every namespaced object is pinned to cert-manager, next to cert-manager itself.
+labels:
+  - pairs:
+      app.kubernetes.io/name: alidns-webhook
+    includeSelectors: true
+resources:
+  - rbac.yaml
+  - pki.yaml
+  - deployment.yaml
+  - apiservice.yaml
+images:
+  - name: ghcr.io/llc1123/cert-manager-alidns-webhook-rust
+    newTag: main
