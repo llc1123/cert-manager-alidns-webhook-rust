@@ -1,0 +1,15 @@
+# Rust build output
+/target/
+
+# Local test and coverage output
+/coverage/
+/tmp/
+
+# Local environment and editor state
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+.omo/
