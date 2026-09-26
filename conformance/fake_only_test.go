@@ -6,14 +6,15 @@ import (
 	"testing"
 )
 
-// Fuzzy RRKeyWord matches spread over several 500-record pages must neither
-// hide an existing record (duplicate Present) nor a record to delete.
+// Matches spread over several 500-record pages must neither hide an existing
+// record (duplicate Present) nor a record to delete.
 func TestPaginatedRecordLookup(t *testing.T) {
 	target := newTarget(t)
 	fake := target.requireFake(t)
 	domain := strings.TrimSuffix(target.zone, ".")
+	// Same name, other values: every one matches the exact lookup.
 	for i := range 1100 {
-		fake.seed(domain, "_acme-challenge.noise"+strconv.Itoa(i), "noise")
+		fake.seed(domain, "_acme-challenge", "noise-"+strconv.Itoa(i))
 	}
 	hook := solver(t, target.process, &target.client)
 	ch := challenge(target.zone, "_acme-challenge."+target.zone, "paged-key")

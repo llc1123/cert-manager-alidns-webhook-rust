@@ -1,11 +1,11 @@
 package conformance
 
 import (
-	"crypto/hmac"
-	"crypto/sha1"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +15,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/alibabacloud-go/openapi-util/service"
+	"github.com/alibabacloud-go/tea/tea"
 )
 
 const (
@@ -30,9 +33,9 @@ type fakeRecord struct {
 	Value  string
 }
 
-// aliDNSFake is a stateful AliDNS RPC endpoint that independently verifies
-// signature version 1.0 and mirrors the documented error codes the webhook
-// depends on.
+// aliDNSFake is a stateful AliDNS RPC endpoint. It verifies signature V3
+// (ACS3-HMAC-SHA256) with Alibaba Cloud's official openapi-util and mirrors
+// the documented error codes the webhook depends on.
 type aliDNSFake struct {
 	server  *httptest.Server
 	domains map[string]bool
@@ -101,23 +104,23 @@ func (f *aliDNSFake) count() int {
 
 func (f *aliDNSFake) serve(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	if r.Method != http.MethodGet || r.URL.Path != "/" {
+	if r.Method != http.MethodPost || r.URL.Path != "/" {
 		writeError(w, http.StatusNotFound, "InvalidAction.NotFound")
 		return
 	}
-	if code := verifySignature(query); code != "" {
+	if code := verifySignature(r); code != "" {
 		writeError(w, http.StatusBadRequest, code)
 		return
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	nonce := query.Get("SignatureNonce")
+	nonce := r.Header.Get("x-acs-signature-nonce")
 	if f.nonces[nonce] {
 		writeError(w, http.StatusBadRequest, "SignatureNonceUsed")
 		return
 	}
 	f.nonces[nonce] = true
-	action := query.Get("Action")
+	action := r.Header.Get("x-acs-action")
 	if code, ok := f.failNext[action]; ok {
 		delete(f.failNext, action)
 		writeError(w, http.StatusServiceUnavailable, code)
@@ -147,12 +150,16 @@ func (f *aliDNSFake) describe(w http.ResponseWriter, query url.Values) {
 		writeError(w, http.StatusBadRequest, "InvalidParameter")
 		return
 	}
-	keyword := strings.ToLower(query.Get("RRKeyWord"))
+	// COMBINATION: exact RRKeyWord; otherwise fuzzy, case-insensitive.
+	keyword := query.Get("RRKeyWord")
+	rrMatches := func(rr string) bool { return strings.Contains(strings.ToLower(rr), strings.ToLower(keyword)) }
+	if query.Get("SearchMode") == "COMBINATION" {
+		rrMatches = func(rr string) bool { return keyword == "" || rr == keyword }
+	}
 	recordType := query.Get("TypeKeyWord")
 	var hits []fakeRecord
 	for _, record := range f.records {
-		if record.Domain == domain && strings.Contains(strings.ToLower(record.RR), keyword) &&
-			(recordType == "" || record.Type == recordType) {
+		if record.Domain == domain && rrMatches(record.RR) && (recordType == "" || record.Type == recordType) {
 			hits = append(hits, record)
 		}
 	}
@@ -205,47 +212,47 @@ func (f *aliDNSFake) delete(w http.ResponseWriter, query url.Values) {
 	writeJSON(w, http.StatusOK, map[string]any{"RequestId": "fake", "RecordId": strconv.Itoa(id)})
 }
 
-// verifySignature implements https://help.aliyun.com/document_detail/29747.html
-// independently of the Rust code under test.
-func verifySignature(query url.Values) string {
-	for key, want := range map[string]string{
-		"AccessKeyId": fakeAccessKeyID, "Format": "JSON", "SignatureMethod": "HMAC-SHA1",
-		"SignatureVersion": "1.0", "Version": "2015-01-09",
-	} {
-		if query.Get(key) != want {
-			return "MissingParameter." + key
-		}
+// verifySignature checks a signature V3 request against Alibaba Cloud's
+// official GetAuthorization, independently of the Rust code under test.
+func verifySignature(r *http.Request) string {
+	if r.Header.Get("x-acs-version") != "2015-01-09" {
+		return "MissingParameter.Version"
 	}
-	timestamp, err := time.Parse("2006-01-02T15:04:05Z", query.Get("Timestamp"))
-	if err != nil || time.Since(timestamp).Abs() > 15*time.Minute {
+	date, err := time.Parse("2006-01-02T15:04:05Z", r.Header.Get("x-acs-date"))
+	if err != nil || time.Since(date).Abs() > 15*time.Minute {
 		return "InvalidTimeStamp.Format"
 	}
-	signature := query.Get("Signature")
-	keys := make([]string, 0, len(query))
-	for key := range query {
-		if key != "Signature" {
-			keys = append(keys, key)
-		}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return "InvalidParameter"
 	}
-	sort.Strings(keys)
-	pairs := make([]string, 0, len(keys))
-	for _, key := range keys {
-		pairs = append(pairs, specialURLEncode(key)+"="+specialURLEncode(query.Get(key)))
+	payload := sha256.Sum256(body)
+	payloadHash := hex.EncodeToString(payload[:])
+	if r.Header.Get("x-acs-content-sha256") != payloadHash {
+		return "ContentSHA256NotMatched"
 	}
-	stringToSign := "GET&%2F&" + specialURLEncode(strings.Join(pairs, "&"))
-	mac := hmac.New(sha1.New, []byte(fakeAccessKeySecret+"&"))
-	mac.Write([]byte(stringToSign))
-	if !hmac.Equal([]byte(signature), []byte(base64.StdEncoding.EncodeToString(mac.Sum(nil)))) {
+	headers := map[string]*string{"host": tea.String(r.Host)}
+	for name, values := range r.Header {
+		headers[strings.ToLower(name)] = tea.String(strings.Join(values, ","))
+	}
+	query := map[string]*string{}
+	for key, values := range r.URL.Query() {
+		query[key] = tea.String(values[0])
+	}
+	request := tea.NewRequest()
+	request.Method = tea.String(r.Method)
+	request.Pathname = tea.String(r.URL.Path)
+	request.Headers = headers
+	request.Query = query
+	want := service.GetAuthorization(request, tea.String("ACS3-HMAC-SHA256"), tea.String(payloadHash),
+		tea.String(fakeAccessKeyID), tea.String(fakeAccessKeySecret))
+	// The official signer covers every host/x-acs-* header present, so an
+	// unsigned or altered header also fails this comparison.
+	got := r.Header.Get("Authorization")
+	if got != *want {
 		return "SignatureDoesNotMatch"
 	}
 	return ""
-}
-
-func specialURLEncode(value string) string {
-	encoded := url.QueryEscape(value)
-	encoded = strings.ReplaceAll(encoded, "+", "%20")
-	encoded = strings.ReplaceAll(encoded, "*", "%2A")
-	return strings.ReplaceAll(encoded, "%7E", "~")
 }
 
 func writeError(w http.ResponseWriter, status int, code string) {
@@ -258,4 +265,59 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// Guards the guard: the fake must reject wrongly signed or altered requests.
+func TestFakeRejectsInvalidSignatures(t *testing.T) {
+	fake := newAliDNSFake(t, "example.com")
+	send := func(secret string, tamper func(*http.Request)) string {
+		t.Helper()
+		query := url.Values{"DomainName": {"example.com"}, "SearchMode": {"COMBINATION"}, "PageNumber": {"1"}, "PageSize": {"10"}}
+		request, err := http.NewRequest(http.MethodPost, fake.server.URL+"/?"+query.Encode(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		empty := sha256.Sum256(nil)
+		for name, value := range map[string]string{
+			"x-acs-action": "DescribeDomainRecords", "x-acs-version": "2015-01-09",
+			"x-acs-date":            time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			"x-acs-signature-nonce": fmt.Sprint(time.Now().UnixNano()), "x-acs-content-sha256": hex.EncodeToString(empty[:]),
+		} {
+			request.Header.Set(name, value)
+		}
+		headers := map[string]*string{"host": tea.String(request.URL.Host)}
+		for name := range request.Header {
+			headers[strings.ToLower(name)] = tea.String(request.Header.Get(name))
+		}
+		signing := tea.NewRequest()
+		signing.Method, signing.Pathname, signing.Headers = tea.String("POST"), tea.String("/"), headers
+		signing.Query = map[string]*string{}
+		for key := range query {
+			signing.Query[key] = tea.String(query.Get(key))
+		}
+		request.Header.Set("Authorization", *service.GetAuthorization(signing, tea.String("ACS3-HMAC-SHA256"),
+			tea.String(hex.EncodeToString(empty[:])), tea.String(fakeAccessKeyID), tea.String(secret)))
+		tamper(request)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var body struct{ Code string }
+		_ = json.NewDecoder(response.Body).Decode(&body)
+		return body.Code
+	}
+	untouched := func(*http.Request) {}
+	if code := send(fakeAccessKeySecret, untouched); code != "" {
+		t.Fatalf("correctly signed request rejected: %s", code)
+	}
+	if code := send("wrong-secret", untouched); code != "SignatureDoesNotMatch" {
+		t.Fatalf("wrong secret: got %q", code)
+	}
+	tampered := func(r *http.Request) {
+		r.URL.RawQuery = strings.Replace(r.URL.RawQuery, "PageSize=10", "PageSize=11", 1)
+	}
+	if code := send(fakeAccessKeySecret, tampered); code != "SignatureDoesNotMatch" {
+		t.Fatalf("tampered query: got %q", code)
+	}
 }

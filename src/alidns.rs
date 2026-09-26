@@ -1,18 +1,21 @@
-//! Minimal AliDNS OpenAPI client (RPC style, signature version 1.0).
+//! Minimal AliDNS OpenAPI client: RPC style with signature V3
+//! (`ACS3-HMAC-SHA256`), the default of the current Alibaba Cloud SDKs.
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fmt::Write as _;
 use std::time::Duration;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use anyhow::Context;
 use hmac::{Hmac, KeyInit, Mac};
+use reqwest::Url;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use sha1::Sha1;
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
 const API_VERSION: &str = "2015-01-09";
+const ALGORITHM: &str = "ACS3-HMAC-SHA256";
 const PAGE_SIZE: u64 = 500;
 const DUPLICATE_RECORD: &str = "DomainRecordDuplicate";
 
@@ -99,18 +102,31 @@ struct Ignored {}
 
 pub struct Client {
     http: reqwest::Client,
-    endpoint: String,
+    endpoint: Url,
+    host: String,
     credentials: Credentials,
 }
 
 impl Client {
-    pub fn new(endpoint: &str, credentials: Credentials) -> Result<Self, reqwest::Error> {
+    pub fn new(endpoint: &str, credentials: Credentials) -> anyhow::Result<Self> {
+        let mut endpoint = Url::parse(endpoint)
+            .with_context(|| format!("invalid AliDNS endpoint {endpoint:?}"))?;
+        endpoint.set_path("/");
+        let host = endpoint
+            .host_str()
+            .with_context(|| format!("AliDNS endpoint {endpoint} has no host"))?;
+        // Must equal the Host header reqwest sends: the port only when non-default.
+        let host = match endpoint.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host.to_owned(),
+        };
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?;
         Ok(Self {
             http,
-            endpoint: endpoint.trim_end_matches('/').to_owned(),
+            endpoint,
+            host,
             credentials,
         })
     }
@@ -160,8 +176,10 @@ impl Client {
         for page in 1_u64.. {
             let page_number = page.to_string();
             let page_size = PAGE_SIZE.to_string();
+            // COMBINATION matches RRKeyWord and TypeKeyWord exactly.
             let params = [
                 ("DomainName", domain),
+                ("SearchMode", "COMBINATION"),
                 ("RRKeyWord", rr),
                 ("TypeKeyWord", "TXT"),
                 ("PageNumber", page_number.as_str()),
@@ -192,21 +210,31 @@ impl Client {
         action: &'static str,
         params: &[(&str, &str)],
     ) -> Result<T, Error> {
-        let nonce = uuid::Uuid::new_v4().to_string();
-        let query = signed_query(
-            &self.credentials,
-            action,
-            params,
-            &timestamp(OffsetDateTime::now_utc()),
-            &nonce,
-        )?;
+        let query = canonical_query(params);
+        let headers = BTreeMap::from([
+            ("host", self.host.clone()),
+            ("x-acs-action", action.to_owned()),
+            ("x-acs-content-sha256", hex_sha256(b"")),
+            ("x-acs-date", timestamp(OffsetDateTime::now_utc())),
+            (
+                "x-acs-signature-nonce",
+                uuid::Uuid::new_v4().simple().to_string(),
+            ),
+            ("x-acs-version", API_VERSION.to_owned()),
+        ]);
+        let authorization = authorization(&self.credentials, &query, &headers)?;
+        let mut url = self.endpoint.clone();
+        url.set_query(Some(&query));
         let transport = |source| Error::Transport { action, source };
-        let response = self
+        let mut request = self
             .http
-            .get(format!("{}/?{query}", self.endpoint))
-            .send()
-            .await
-            .map_err(transport)?;
+            .post(url)
+            .header("authorization", authorization)
+            .header("accept", "application/json");
+        for (name, value) in &headers {
+            request = request.header(*name, value);
+        }
+        let response = request.send().await.map_err(transport)?;
         let status = response.status();
         let body = response.bytes().await.map_err(transport)?;
         let decode = |source| Error::Decode {
@@ -271,48 +299,57 @@ fn timestamp(now: OffsetDateTime) -> String {
     )
 }
 
-fn signed_query(
-    credentials: &Credentials,
-    action: &str,
-    params: &[(&str, &str)],
-    timestamp: &str,
-    nonce: &str,
-) -> Result<String, hmac::digest::InvalidLength> {
-    let mut all = BTreeMap::from([
-        ("AccessKeyId", credentials.access_key_id.as_str()),
-        ("Action", action),
-        ("Format", "JSON"),
-        ("SignatureMethod", "HMAC-SHA1"),
-        ("SignatureNonce", nonce),
-        ("SignatureVersion", "1.0"),
-        ("Timestamp", timestamp),
-        ("Version", API_VERSION),
-    ]);
-    all.extend(params.iter().copied());
-    let canonical = canonical_query(&all);
-    let signature = sign(&credentials.access_key_secret, &string_to_sign(&canonical))?;
-    Ok(format!(
-        "{canonical}&Signature={}",
-        percent_encode(&signature)
-    ))
-}
-
-fn canonical_query(params: &BTreeMap<&str, &str>) -> String {
-    params
+/// Sorted, RFC 3986-encoded query string; it is both sent and signed.
+fn canonical_query(params: &[(&str, &str)]) -> String {
+    let sorted: BTreeMap<&str, &str> = params.iter().copied().collect();
+    sorted
         .iter()
         .map(|(key, value)| format!("{}={}", percent_encode(key), percent_encode(value)))
         .collect::<Vec<_>>()
         .join("&")
 }
 
-fn string_to_sign(canonical_query: &str) -> String {
-    format!("GET&%2F&{}", percent_encode(canonical_query))
+/// `Authorization` header for a body-less `POST /` (signature V3). `headers`
+/// must hold exactly the lowercase headers to sign, including
+/// `x-acs-content-sha256`.
+fn authorization(
+    credentials: &Credentials,
+    canonical_query: &str,
+    headers: &BTreeMap<&str, String>,
+) -> Result<String, hmac::digest::InvalidLength> {
+    let canonical_headers: String = headers
+        .iter()
+        .map(|(name, value)| format!("{name}:{}\n", value.trim()))
+        .collect();
+    let signed_headers = headers.keys().copied().collect::<Vec<_>>().join(";");
+    let payload_hash = headers
+        .get("x-acs-content-sha256")
+        .map_or("", String::as_str);
+    let canonical_request = format!(
+        "POST\n/\n{canonical_query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    );
+    let string_to_sign = format!("{ALGORITHM}\n{}", hex_sha256(canonical_request.as_bytes()));
+    let mut mac =
+        <Hmac<Sha256> as KeyInit>::new_from_slice(credentials.access_key_secret.as_bytes())?;
+    mac.update(string_to_sign.as_bytes());
+    Ok(format!(
+        "{ALGORITHM} Credential={},SignedHeaders={signed_headers},Signature={}",
+        credentials.access_key_id,
+        hex(&mac.finalize().into_bytes())
+    ))
 }
 
-fn sign(secret: &str, string_to_sign: &str) -> Result<String, hmac::digest::InvalidLength> {
-    let mut mac = <Hmac<Sha1> as KeyInit>::new_from_slice(format!("{secret}&").as_bytes())?;
-    mac.update(string_to_sign.as_bytes());
-    Ok(STANDARD.encode(mac.finalize().into_bytes()))
+fn hex_sha256(data: &[u8]) -> String {
+    hex(&Sha256::digest(data))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 /// RFC 3986 percent-encoding as required by the Alibaba Cloud RPC signature.
@@ -332,28 +369,42 @@ fn percent_encode(input: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Worked example from the AliDNS "request signature" documentation.
+    /// Vector produced by Alibaba Cloud's official
+    /// `github.com/alibabacloud-go/openapi-util` `GetAuthorization`.
     #[test]
-    fn signs_documented_example() -> Result<(), hmac::digest::InvalidLength> {
-        let params = BTreeMap::from([
-            ("AccessKeyId", "testid"),
-            ("Action", "DescribeDomainRecords"),
+    fn signs_like_official_sdk() -> Result<(), hmac::digest::InvalidLength> {
+        let credentials = Credentials {
+            access_key_id: "YourAccessKeyId".into(),
+            access_key_secret: "YourAccessKeySecret".into(),
+        };
+        let query = canonical_query(&[
+            ("Value", "k/+=é"),
             ("DomainName", "example.com"),
-            ("Format", "XML"),
-            ("SignatureMethod", "HMAC-SHA1"),
-            ("SignatureNonce", "f59ed6a9-83fc-473b-9cc6-99c95df3856e"),
-            ("SignatureVersion", "1.0"),
-            ("Timestamp", "2016-03-24T16:41:54Z"),
-            ("Version", "2015-01-09"),
+            ("RR", "_acme-challenge.a b*~"),
+            ("Type", "TXT"),
         ]);
-        let string_to_sign = string_to_sign(&canonical_query(&params));
         assert_eq!(
-            string_to_sign,
-            "GET&%2F&AccessKeyId%3Dtestid%26Action%3DDescribeDomainRecords%26DomainName%3Dexample.com%26Format%3DXML%26SignatureMethod%3DHMAC-SHA1%26SignatureNonce%3Df59ed6a9-83fc-473b-9cc6-99c95df3856e%26SignatureVersion%3D1.0%26Timestamp%3D2016-03-24T16%253A41%253A54Z%26Version%3D2015-01-09"
+            query,
+            "DomainName=example.com&RR=_acme-challenge.a%20b%2A~&Type=TXT&Value=k%2F%2B%3D%C3%A9"
+        );
+        let headers = BTreeMap::from([
+            ("host", "alidns.aliyuncs.com".to_owned()),
+            ("x-acs-action", "AddDomainRecord".to_owned()),
+            ("x-acs-content-sha256", hex_sha256(b"")),
+            ("x-acs-date", "2026-09-27T01:02:03Z".to_owned()),
+            (
+                "x-acs-signature-nonce",
+                "3156853299f313e23d1673dc12e1703d".to_owned(),
+            ),
+            ("x-acs-version", "2015-01-09".to_owned()),
+        ]);
+        assert_eq!(
+            headers["x-acs-content-sha256"],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         assert_eq!(
-            sign("testsecret", &string_to_sign)?,
-            "uRpHwaSEt3J+6KQD//svCh/x+pI="
+            authorization(&credentials, &query, &headers)?,
+            "ACS3-HMAC-SHA256 Credential=YourAccessKeyId,SignedHeaders=host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version,Signature=98648f18f798a6d0a3879e7f236ea65df4917667858b849e1927a43d3f81fcb0"
         );
         Ok(())
     }
