@@ -15,8 +15,10 @@ TXT records through the AliDNS RPC API.
 
 ## Repository map
 
-- `src/alidns.rs`: AliDNS RPC signature 1.0, paginated TXT lookup, idempotent
-  Present, and key-scoped CleanUp.
+- `src/alidns.rs`: AliDNS RPC with signature V3 (`ACS3-HMAC-SHA256`, the
+  current SDK default), paginated TXT lookup, idempotent Present, and
+  key-scoped CleanUp. Follow the current API definitions in
+  [alibabacloud-typescript-sdk/alidns-20150109](https://github.com/aliyun/alibabacloud-typescript-sdk/tree/master/alidns-20150109).
 - `src/challenge.rs`: decoding and responding to cert-manager
   `ChallengePayload` (`v1alpha1`).
 - `src/server.rs`: the TLS accept loop, routing, health endpoints, discovery,
@@ -70,8 +72,12 @@ TXT records through the AliDNS RPC API.
 - CleanUp deletes only TXT records whose RR and value both match exactly.
   Concurrent challenges for the same name must survive.
 - Never touch records outside the resolved zone, or records other than TXT.
-- Page through all lookup results. `RRKeyWord` is a fuzzy match, so filter
-  exactly on the client side.
+- Look up records with `SearchMode=COMBINATION` (exact `RRKeyWord` and
+  `TypeKeyWord`), page through all results, and still filter exactly on the
+  client side.
+- Keep the signature V3 unit vector sourced from Alibaba Cloud's official
+  `openapi-util` `GetAuthorization`. The conformance fake verifies every
+  request with that same implementation.
 - Do not add generic retries. cert-manager retries failed challenges and
   converges from observed state.
 

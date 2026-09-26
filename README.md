@@ -13,7 +13,7 @@ cert-manager ── POST /apis/<group>/v1alpha1/alidns-solver ──▶ kube-api
                                                                  │ RBAC check, aggregation proxy
                                                                  ▼  (front-proxy client certificate)
                                                  Rust webhook (APIService backend)
-                                                                 │ RPC signature v1
+                                                                 │ RPC, signature V3 (ACS3-HMAC-SHA256)
                                                                  ▼
                                                               AliDNS API
 ```

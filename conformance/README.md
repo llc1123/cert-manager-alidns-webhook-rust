@@ -10,8 +10,9 @@ No cluster is needed. The suite starts:
 - a fake kube-apiserver that serves
   `kube-system/extension-apiserver-authentication` through a generated
   kubeconfig;
-- a stateful AliDNS fake. It checks signature version 1.0 independently of the
-  Rust code, rejects nonce replays, pages results, returns
+- a stateful AliDNS fake. It verifies signature V3 (`ACS3-HMAC-SHA256`) with
+  Alibaba Cloud's official `openapi-util` signer, rejects nonce replays,
+  implements `SearchMode=COMBINATION` and paging, returns
   `DomainRecordDuplicate`, and supports failure injection;
 - the Rust binary, on a dynamically allocated port.
 
