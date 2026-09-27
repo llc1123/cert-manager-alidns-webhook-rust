@@ -1,0 +1,36 @@
+name: Rust CI
+on:
+  push:
+  pull_request:
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: rust
+      - uses: actions/checkout@v7
+        with:
+          repository: cert-manager/cert-manager
+          ref: 99714653c0d650ed7cf2c622d9b0013b24098c83
+          path: cert-manager
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+        working-directory: rust
+      - run: cargo test --all-targets --all-features
+        working-directory: rust
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: rust
+      - run: cargo build --release
+        working-directory: rust
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: rust/conformance/go.mod
+          cache-dependency-path: rust/conformance/go.sum
+      - run: RUST_BINARY="$PWD/../target/release/cert-manager-alidns-webhook" go test -race -shuffle=on -count=1 ./...
+        working-directory: rust/conformance
+      - run: kubectl kustomize deploy/base > /dev/null
+        working-directory: rust

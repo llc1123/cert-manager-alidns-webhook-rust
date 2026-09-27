@@ -1,0 +1,15 @@
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1alpha1.alidns.acme.local
+  annotations:
+    cert-manager.io/inject-ca-from: cert-manager/alidns-webhook-tls
+spec:
+  group: alidns.acme.local
+  version: v1alpha1
+  groupPriorityMinimum: 1000
+  versionPriority: 15
+  service:
+    name: alidns-webhook
+    namespace: cert-manager
+    port: 443
