@@ -25,9 +25,9 @@ RUST_BINARY="$PWD/../target/release/cert-manager-alidns-webhook" \
   go test -race -shuffle=on -count=1 ./...
 ```
 
-The committed `replace` expects cert-manager checked out at `../../cert-manager`
-(CI pins commit `99714653`). An unset `RUST_BINARY` fails the suite instead of
-skipping it.
+The conformance module pins the cert-manager pseudo-version built from commit
+`99714653`, which provides the client APIs used by the suite. An unset
+`RUST_BINARY` fails the suite instead of skipping it.
 
 ## External AliDNS mode
 

@@ -9,11 +9,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: rust
-      - uses: actions/checkout@v7
-        with:
-          repository: cert-manager/cert-manager
-          ref: 99714653c0d650ed7cf2c622d9b0013b24098c83
-          path: cert-manager
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
