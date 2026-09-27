@@ -16,6 +16,7 @@ use tokio::net::TcpListener;
 use crate::config::Config;
 use crate::tls::{ReloadingCert, Snapshot};
 
+/// Loads TLS and trust material, then serves the webhook until SIGTERM or Ctrl-C.
 pub async fn run(config: Config) -> Result<()> {
     let certificate = Arc::new(ReloadingCert::load(
         config.tls_cert_file.clone(),
@@ -52,6 +53,7 @@ pub async fn run(config: Config) -> Result<()> {
     Ok(())
 }
 
+/// Resolves on SIGTERM or Ctrl-C.
 async fn shutdown_signal() {
     let terminate = async {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {

@@ -13,6 +13,7 @@ const NAMESPACE: &str = "kube-system";
 const NAME: &str = "extension-apiserver-authentication";
 const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Reads the aggregator trust material from the cluster.
 pub async fn fetch(client: &kube::Client) -> Result<RequestHeader> {
     let config_map = Api::<ConfigMap>::namespaced(client.clone(), NAMESPACE)
         .get(NAME)
@@ -21,6 +22,7 @@ pub async fn fetch(client: &kube::Client) -> Result<RequestHeader> {
     parse(config_map.data.unwrap_or_default())
 }
 
+/// Extracts the client CA and allowed names from the ConfigMap data.
 fn parse(data: BTreeMap<String, String>) -> Result<RequestHeader> {
     let client_ca_pem = data
         .get("requestheader-client-ca-file")

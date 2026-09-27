@@ -71,6 +71,7 @@ func newTarget(t *testing.T) *target {
 	}
 }
 
+// requireFake skips the test unless the in-process fake is in use.
 func (tg *target) requireFake(t *testing.T) *aliDNSFake {
 	t.Helper()
 	if tg.fake == nil {
@@ -84,6 +85,7 @@ type fakeBackend struct {
 	zone string
 }
 
+// rr splits fqdn into the fake domain and relative record name.
 func (b fakeBackend) rr(t *testing.T, fqdn string) (string, string) {
 	t.Helper()
 	domain := util.UnFqdn(b.zone)
@@ -94,6 +96,7 @@ func (b fakeBackend) rr(t *testing.T, fqdn string) (string, string) {
 	return domain, rr
 }
 
+// waitPresent asserts the record exists; the fake is synchronous.
 func (b fakeBackend) waitPresent(t *testing.T, fqdn, value string) {
 	t.Helper()
 	domain, rr := b.rr(t, fqdn)
@@ -102,6 +105,7 @@ func (b fakeBackend) waitPresent(t *testing.T, fqdn, value string) {
 	}
 }
 
+// waitAbsent asserts the record is gone.
 func (b fakeBackend) waitAbsent(t *testing.T, fqdn, value string) {
 	t.Helper()
 	domain, rr := b.rr(t, fqdn)
@@ -110,6 +114,7 @@ func (b fakeBackend) waitAbsent(t *testing.T, fqdn, value string) {
 	}
 }
 
+// assertSingle asserts exactly one matching record exists.
 func (b fakeBackend) assertSingle(t *testing.T, fqdn, value string) {
 	t.Helper()
 	domain, rr := b.rr(t, fqdn)
@@ -130,6 +135,7 @@ const (
 	propagationLimit = 5 * time.Minute
 )
 
+// waitPresent polls the authoritative nameservers until the value appears.
 func (b dnsBackend) waitPresent(t *testing.T, fqdn, value string) {
 	t.Helper()
 	err := wait.PollUntilContextTimeout(t.Context(), pollInterval, propagationLimit, true, func(ctx context.Context) (bool, error) {
@@ -140,6 +146,7 @@ func (b dnsBackend) waitPresent(t *testing.T, fqdn, value string) {
 	}
 }
 
+// waitAbsent polls the authoritative nameservers until the value disappears.
 func (b dnsBackend) waitAbsent(t *testing.T, fqdn, value string) {
 	t.Helper()
 	err := wait.PollUntilContextTimeout(t.Context(), pollInterval, propagationLimit, true, func(ctx context.Context) (bool, error) {
@@ -165,4 +172,5 @@ func (b dnsBackend) waitAbsent(t *testing.T, fqdn, value string) {
 	}
 }
 
+// assertSingle is a no-op: DNS answers cannot reveal duplicate records.
 func (dnsBackend) assertSingle(*testing.T, string, string) {}

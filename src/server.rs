@@ -29,6 +29,7 @@ pub struct State {
 }
 
 impl State {
+    /// Derives the API paths for `group_name` and `solver_name`.
     pub fn new(group_name: &str, solver_name: &str, alidns: alidns::Client) -> Self {
         let group_version = format!("{group_name}/v1alpha1");
         Self {
@@ -41,6 +42,7 @@ impl State {
     }
 }
 
+/// Accepts TLS connections until `shutdown` resolves, using the current TLS snapshot per connection.
 pub async fn serve(
     listener: TcpListener,
     tls: Arc<ArcSwap<Snapshot>>,
@@ -87,6 +89,7 @@ pub async fn serve(
     }
 }
 
+/// Dispatches one request; only health endpoints are served to unauthenticated clients.
 async fn route(
     state: &State,
     authenticated: bool,
@@ -156,6 +159,7 @@ async fn route(
     )
 }
 
+/// The `APIResourceList` advertising the solver resource.
 fn discovery(state: &State) -> Value {
     json!({
         "kind": "APIResourceList",
@@ -171,6 +175,7 @@ fn discovery(state: &State) -> Value {
     })
 }
 
+/// A Kubernetes `Status` failure response.
 fn status(code: StatusCode, reason: &str, message: &str) -> Response<Full<Bytes>> {
     json_response(
         code,
@@ -186,14 +191,17 @@ fn status(code: StatusCode, reason: &str, message: &str) -> Response<Full<Bytes>
     )
 }
 
+/// A JSON response with the given status code.
 fn json_response(code: StatusCode, body: &Value) -> Response<Full<Bytes>> {
     response(code, "application/json", body.to_string())
 }
 
+/// A plain-text response with the given status code.
 fn text(code: StatusCode, body: &'static str) -> Response<Full<Bytes>> {
     response(code, "text/plain; charset=utf-8", body.to_owned())
 }
 
+/// A response with the given status, content type, and body.
 fn response(code: StatusCode, content_type: &'static str, body: String) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::new(Bytes::from(body)));
     *response.status_mut() = code;

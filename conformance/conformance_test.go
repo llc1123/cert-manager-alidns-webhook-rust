@@ -28,6 +28,7 @@ func solver(t *testing.T, process *webhookProcess, client *keyPair) *webhook.Web
 	return hook
 }
 
+// challenge builds a ChallengeRequest the way cert-manager does for this solver.
 func challenge(zone, fqdn, key string) *whapi.ChallengeRequest {
 	return &whapi.ChallengeRequest{
 		UID:               types.UID("uid-" + nonce()),
@@ -43,6 +44,7 @@ func challenge(zone, fqdn, key string) *whapi.ChallengeRequest {
 	}
 }
 
+// nonce returns a random hex string for unique names and keys.
 func nonce() string {
 	var value [6]byte
 	if _, err := rand.Read(value[:]); err != nil {

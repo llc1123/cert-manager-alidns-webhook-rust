@@ -98,6 +98,7 @@ func (p *webhookProcess) restConfig(client *keyPair) *rest.Config {
 	return config
 }
 
+// httpClient trusts the serving CA and presents client when non-nil.
 func (p *webhookProcess) httpClient(t *testing.T, client *keyPair) *http.Client {
 	t.Helper()
 	pool := x509.NewCertPool()
@@ -112,6 +113,7 @@ func (p *webhookProcess) httpClient(t *testing.T, client *keyPair) *http.Client 
 	}
 }
 
+// waitReady polls /healthz and fails early if the process exits.
 func (p *webhookProcess) waitReady(t *testing.T, exited chan error) {
 	t.Helper()
 	client := p.httpClient(t, nil)
@@ -133,6 +135,7 @@ func (p *webhookProcess) waitReady(t *testing.T, exited chan error) {
 	t.Fatalf("webhook did not become ready: %s", p.url)
 }
 
+// newFakeKubeAPI serves the extension-apiserver-authentication ConfigMap over TLS.
 func newFakeKubeAPI(t *testing.T, kubeCA, frontProxyCA keyPair) *httptest.Server {
 	t.Helper()
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +163,7 @@ func newFakeKubeAPI(t *testing.T, kubeCA, frontProxyCA keyPair) *httptest.Server
 	return server
 }
 
+// writeKubeconfig points a token-authenticated kubeconfig at server.
 func writeKubeconfig(t *testing.T, path string, server *httptest.Server, ca keyPair) {
 	t.Helper()
 	config := map[string]any{
@@ -181,6 +185,7 @@ func writeKubeconfig(t *testing.T, path string, server *httptest.Server, ca keyP
 	}
 }
 
+// reservePort returns a currently free local TCP port.
 func reservePort(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

@@ -36,6 +36,7 @@ pub fn decode(body: &[u8]) -> Result<(Value, ChallengeRequest), String> {
     Ok((payload, request))
 }
 
+/// Applies the requested action to AliDNS.
 pub async fn solve(
     client: &alidns::Client,
     request: &ChallengeRequest,

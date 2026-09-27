@@ -26,6 +26,7 @@ pub struct Credentials {
 }
 
 impl fmt::Debug for Credentials {
+    /// Formats the credentials with the secret redacted.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Credentials")
             .field("access_key_id", &self.access_key_id)
@@ -108,6 +109,7 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a client for `endpoint` (scheme and host; any path is replaced by `/`).
     pub fn new(endpoint: &str, credentials: Credentials) -> anyhow::Result<Self> {
         let mut endpoint = Url::parse(endpoint)
             .with_context(|| format!("invalid AliDNS endpoint {endpoint:?}"))?;
@@ -168,6 +170,7 @@ impl Client {
         Ok(())
     }
 
+    /// Returns the TXT records whose RR is exactly `rr`, across all result pages.
     async fn txt_records(&self, domain: &str, rr: &str) -> Result<Vec<Record>, Error> {
         let mut matching = Vec::new();
         // The page count is fixed by the first response so a moving TotalCount
@@ -205,6 +208,7 @@ impl Client {
         Ok(matching)
     }
 
+    /// Sends one signed RPC call and decodes the JSON body or the API error.
     async fn call<T: DeserializeOwned>(
         &self,
         action: &'static str,
@@ -283,10 +287,12 @@ pub fn record_name(fqdn: &str, domain: &str) -> Result<String, Error> {
     }
 }
 
+/// Strips the trailing root dot of a fully qualified name.
 fn unfqdn(name: &str) -> &str {
     name.strip_suffix('.').unwrap_or(name)
 }
 
+/// Formats `now` as the ISO 8601 UTC timestamp used by `x-acs-date`.
 fn timestamp(now: OffsetDateTime) -> String {
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
@@ -339,10 +345,12 @@ fn authorization(
     ))
 }
 
+/// Lowercase hex SHA-256 digest of `data`.
 fn hex_sha256(data: &[u8]) -> String {
     hex(&Sha256::digest(data))
 }
 
+/// Lowercase hex encoding of `bytes`.
 fn hex(bytes: &[u8]) -> String {
     bytes
         .iter()

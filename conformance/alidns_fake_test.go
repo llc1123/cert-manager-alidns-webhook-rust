@@ -48,6 +48,7 @@ type aliDNSFake struct {
 	failNext map[string]string
 }
 
+// newAliDNSFake starts a fake hosting the given domains.
 func newAliDNSFake(t *testing.T, domains ...string) *aliDNSFake {
 	t.Helper()
 	fake := &aliDNSFake{
@@ -65,6 +66,7 @@ func newAliDNSFake(t *testing.T, domains ...string) *aliDNSFake {
 	return fake
 }
 
+// seed inserts a TXT record directly, bypassing the API.
 func (f *aliDNSFake) seed(domain, rr, value string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -72,18 +74,21 @@ func (f *aliDNSFake) seed(domain, rr, value string) {
 	f.records[f.nextID] = fakeRecord{ID: f.nextID, Domain: domain, RR: rr, Type: "TXT", Value: value}
 }
 
+// failNextCall makes the next call of action fail with code.
 func (f *aliDNSFake) failNextCall(action, code string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failNext[action] = code
 }
 
+// writeCount returns the number of successful add and delete calls.
 func (f *aliDNSFake) writeCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.writes
 }
 
+// matching returns the TXT records with exactly this domain, RR, and value.
 func (f *aliDNSFake) matching(domain, rr, value string) []fakeRecord {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -96,12 +101,14 @@ func (f *aliDNSFake) matching(domain, rr, value string) []fakeRecord {
 	return out
 }
 
+// count returns the number of stored records.
 func (f *aliDNSFake) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.records)
 }
 
+// serve authenticates the request and dispatches it by x-acs-action.
 func (f *aliDNSFake) serve(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	if r.Method != http.MethodPost || r.URL.Path != "/" {
@@ -138,6 +145,7 @@ func (f *aliDNSFake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// describe implements DescribeDomainRecords with paging and search modes.
 func (f *aliDNSFake) describe(w http.ResponseWriter, query url.Values) {
 	domain := query.Get("DomainName")
 	if !f.domains[domain] {
@@ -179,6 +187,7 @@ func (f *aliDNSFake) describe(w http.ResponseWriter, query url.Values) {
 	})
 }
 
+// add implements AddDomainRecord, rejecting duplicates.
 func (f *aliDNSFake) add(w http.ResponseWriter, query url.Values) {
 	domain, rr, recordType, value := query.Get("DomainName"), query.Get("RR"), query.Get("Type"), query.Get("Value")
 	if !f.domains[domain] {
@@ -201,6 +210,7 @@ func (f *aliDNSFake) add(w http.ResponseWriter, query url.Values) {
 	writeJSON(w, http.StatusOK, map[string]any{"RequestId": "fake", "RecordId": strconv.Itoa(f.nextID)})
 }
 
+// delete implements DeleteDomainRecord.
 func (f *aliDNSFake) delete(w http.ResponseWriter, query url.Values) {
 	id, err := strconv.Atoi(query.Get("RecordId"))
 	if _, ok := f.records[id]; err != nil || !ok {
@@ -255,12 +265,14 @@ func verifySignature(r *http.Request) string {
 	return ""
 }
 
+// writeError writes an AliDNS-style error body.
 func writeError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]any{
 		"RequestId": "fake", "Code": code, "Message": fmt.Sprintf("fake AliDNS error %s", code),
 	})
 }
 
+// writeJSON writes body as JSON with the given status.
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json;charset=utf-8")
 	w.WriteHeader(status)

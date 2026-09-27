@@ -29,6 +29,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Builds the rustls server configuration for `request_header` and `certificate`.
     pub fn build(request_header: RequestHeader, certificate: Arc<ReloadingCert>) -> Result<Self> {
         let provider = Arc::new(aws_lc_rs::default_provider());
         let mut roots = RootCertStore::empty();
@@ -65,6 +66,7 @@ impl Snapshot {
     }
 }
 
+/// The first subject common name of `certificate`, if any.
 fn common_name(certificate: &CertificateDer<'_>) -> Option<String> {
     let (_, parsed) = x509_parser::parse_x509_certificate(certificate).ok()?;
     parsed
@@ -89,6 +91,7 @@ pub struct ReloadingCert {
 }
 
 impl ReloadingCert {
+    /// Loads the initial certificate pair; fails if it is missing or mismatched.
     pub fn load(cert_file: PathBuf, key_file: PathBuf) -> Result<Self> {
         let stamp = stamp(&cert_file, &key_file);
         let key = load_certified_key(&cert_file, &key_file)?;
@@ -99,6 +102,7 @@ impl ReloadingCert {
         })
     }
 
+    /// The current pair, reloading it first when the files changed.
     fn current(&self) -> Arc<CertifiedKey> {
         let stamp = stamp(&self.cert_file, &self.key_file);
         let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
@@ -117,11 +121,13 @@ impl ReloadingCert {
 }
 
 impl ResolvesServerCert for ReloadingCert {
+    /// Serves the current certificate for every handshake.
     fn resolve(&self, _client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
         Some(self.current())
     }
 }
 
+/// Modification time and size of both files, used to detect rotation.
 fn stamp(cert_file: &Path, key_file: &Path) -> Stamp {
     [cert_file, key_file].map(|path| match fs::metadata(path) {
         Ok(metadata) => (metadata.modified().ok(), metadata.len()),
@@ -129,6 +135,7 @@ fn stamp(cert_file: &Path, key_file: &Path) -> Stamp {
     })
 }
 
+/// Reads a PEM chain and key and checks that they match.
 fn load_certified_key(cert_file: &Path, key_file: &Path) -> Result<CertifiedKey> {
     let chain = CertificateDer::pem_file_iter(cert_file)
         .and_then(Iterator::collect::<Result<Vec<_>, _>>)

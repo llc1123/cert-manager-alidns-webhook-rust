@@ -23,6 +23,7 @@ type keyPair struct {
 	keyPEM  []byte
 }
 
+// tlsCertificate converts the pair for crypto/tls.
 func (k keyPair) tlsCertificate(t *testing.T) tls.Certificate {
 	t.Helper()
 	pair, err := tls.X509KeyPair(k.certPEM, k.keyPEM)
@@ -32,6 +33,7 @@ func (k keyPair) tlsCertificate(t *testing.T) tls.Certificate {
 	return pair
 }
 
+// newCA creates a self-signed CA.
 func newCA(t *testing.T, name string) keyPair {
 	t.Helper()
 	return issue(t, nil, &x509.Certificate{
@@ -42,6 +44,7 @@ func newCA(t *testing.T, name string) keyPair {
 	})
 }
 
+// newServingCert issues a server certificate for 127.0.0.1 and localhost.
 func newServingCert(t *testing.T, ca keyPair) keyPair {
 	t.Helper()
 	return issue(t, &ca, &x509.Certificate{
@@ -53,6 +56,7 @@ func newServingCert(t *testing.T, ca keyPair) keyPair {
 	})
 }
 
+// newClientCert issues a client certificate with the given common name.
 func newClientCert(t *testing.T, ca keyPair, commonName string) keyPair {
 	t.Helper()
 	return issue(t, &ca, &x509.Certificate{
@@ -62,6 +66,7 @@ func newClientCert(t *testing.T, ca keyPair, commonName string) keyPair {
 	})
 }
 
+// issue signs template with parent, or self-signs it when parent is nil.
 func issue(t *testing.T, parent *keyPair, template *x509.Certificate) keyPair {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

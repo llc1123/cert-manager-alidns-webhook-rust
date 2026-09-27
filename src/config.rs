@@ -17,10 +17,12 @@ pub struct Config {
 }
 
 impl Config {
+    /// Reads the configuration from the process environment.
     pub fn from_env() -> Result<Self> {
         Self::from_lookup(|key| std::env::var(key).ok())
     }
 
+    /// Builds the configuration from `get`; empty values count as unset.
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let value = |key: &str| get(key).filter(|value| !value.is_empty());
         let required = |key: &str| value(key).with_context(|| format!("{key} must be set"));
