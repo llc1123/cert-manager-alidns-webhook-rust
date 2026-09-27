@@ -7,9 +7,9 @@ require (
 	github.com/alibabacloud-go/tea v1.5.3
 	github.com/cert-manager/cert-manager v1.21.0
 	github.com/miekg/dns v1.1.73
-	k8s.io/apiextensions-apiserver v0.37.0
-	k8s.io/apimachinery v0.37.0
-	k8s.io/client-go v0.37.0
+	k8s.io/apiextensions-apiserver v0.37.1
+	k8s.io/apimachinery v0.37.1
+	k8s.io/client-go v0.37.1
 )
 
 require (
