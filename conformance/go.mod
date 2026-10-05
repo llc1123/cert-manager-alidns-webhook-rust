@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/alibabacloud-go/openapi-util v0.1.2
 	github.com/alibabacloud-go/tea v1.5.3
-	github.com/cert-manager/cert-manager v1.21.0-beta.0.0.20260925180105-99714653c0d6
+	github.com/cert-manager/cert-manager v1.21.2
 	github.com/miekg/dns v1.1.73
 	k8s.io/apiextensions-apiserver v0.37.1
 	k8s.io/apimachinery v0.37.1
