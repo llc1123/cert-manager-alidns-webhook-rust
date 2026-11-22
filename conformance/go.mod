@@ -9,7 +9,7 @@ require (
 	github.com/miekg/dns v1.1.73
 	k8s.io/apiextensions-apiserver v0.37.2
 	k8s.io/apimachinery v0.37.2
-	k8s.io/client-go v0.37.2
+	k8s.io/client-go v11.0.0+incompatible
 )
 
 require (
